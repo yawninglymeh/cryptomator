@@ -15,22 +15,29 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class IntegrationApiServerTest {
 
 	private static final String TOKEN = "0123456789abcdef0123456789abcdef";
 	private static final ObjectMapper JSON = new ObjectMapper();
 	private final AtomicInteger resolverCalls = new AtomicInteger();
+	private final AtomicInteger vaultListerCalls = new AtomicInteger();
+	private final AtomicReference<List<IntegrationApiServer.VaultResult>> listedVaults = new AtomicReference<>();
 	private ExecutorService executor;
 	private IntegrationApiServer server;
 	private HttpClient client;
 
 	@BeforeEach
 	public void setUp() throws Exception {
+		listedVaults.set(List.of(new IntegrationApiServer.VaultResult("vault-1", "/vault", "/encrypted")));
 		executor = Executors.newCachedThreadPool();
 		server = new IntegrationApiServer(0, TOKEN, paths -> {
 			resolverCalls.incrementAndGet();
 			return paths.stream().map(path -> new IntegrationApiServer.MappingResult("mapped", "vault-1", "/encrypted/item.c9r", null)).toList();
+		}, () -> {
+			vaultListerCalls.incrementAndGet();
+			return listedVaults.get();
 		}, executor);
 		server.start();
 		client = HttpClient.newHttpClient();
@@ -117,6 +124,42 @@ public class IntegrationApiServerTest {
 		Assertions.assertEquals(0, resolverCalls.get());
 	}
 
+	@Test
+	public void testListsUnlockedVaults() throws Exception {
+		var response = client.send(vaultsRequestBuilder().GET().build(), HttpResponse.BodyHandlers.ofString());
+
+		Assertions.assertEquals(200, response.statusCode());
+		var responseJson = JSON.readTree(response.body());
+		Assertions.assertEquals("vault-1", responseJson.at("/vaults/0/vaultId").asText());
+		Assertions.assertEquals("/vault", responseJson.at("/vaults/0/mountPath").asText());
+		Assertions.assertEquals("/encrypted", responseJson.at("/vaults/0/ciphertextRootPath").asText());
+		Assertions.assertEquals(1, vaultListerCalls.get());
+	}
+
+	@Test
+	public void testRejectsVaultListingsAboveProtocolLimit() throws Exception {
+		listedVaults.set(Collections.nCopies(IntegrationApiServer.MAX_VAULTS + 1, new IntegrationApiServer.VaultResult("vault", "/vault", "/encrypted")));
+
+		var response = client.send(vaultsRequestBuilder().GET().build(), HttpResponse.BodyHandlers.ofString());
+
+		Assertions.assertEquals(413, response.statusCode());
+		Assertions.assertEquals("too_many_vaults", JSON.readTree(response.body()).path("error").asText());
+		Assertions.assertEquals(1, vaultListerCalls.get());
+	}
+
+	@Test
+	public void testVaultListingRequiresAuthenticationAndGet() throws Exception {
+		var unauthorized = client.send(vaultsRequestBuilder("wrong-token").GET().build(), HttpResponse.BodyHandlers.ofString());
+		var browserOrigin = client.send(vaultsRequestBuilder().header("Origin", "https://example.com").GET().build(), HttpResponse.BodyHandlers.ofString());
+		var wrongMethod = client.send(vaultsRequestBuilder().POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+
+		Assertions.assertEquals(401, unauthorized.statusCode());
+		Assertions.assertEquals(403, browserOrigin.statusCode());
+		Assertions.assertEquals(405, wrongMethod.statusCode());
+		Assertions.assertEquals("GET", wrongMethod.headers().firstValue("Allow").orElseThrow());
+		Assertions.assertEquals(0, vaultListerCalls.get());
+	}
+
 	private HttpRequest.Builder requestBuilder() {
 		return requestBuilder(TOKEN);
 	}
@@ -125,7 +168,19 @@ public class IntegrationApiServerTest {
 		return HttpRequest.newBuilder(endpoint()).header("Authorization", "Bearer " + token).header("Content-Type", "application/json");
 	}
 
+	private HttpRequest.Builder vaultsRequestBuilder() {
+		return vaultsRequestBuilder(TOKEN);
+	}
+
+	private HttpRequest.Builder vaultsRequestBuilder(String token) {
+		return HttpRequest.newBuilder(vaultsEndpoint()).header("Authorization", "Bearer " + token);
+	}
+
 	private URI endpoint() {
 		return URI.create("http://127.0.0.1:" + server.address().getPort() + "/v1/resolve");
+	}
+
+	private URI vaultsEndpoint() {
+		return URI.create("http://127.0.0.1:" + server.address().getPort() + "/v1/vaults");
 	}
 }

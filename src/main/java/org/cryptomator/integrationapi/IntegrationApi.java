@@ -50,7 +50,7 @@ public class IntegrationApi implements AutoCloseable {
 			}
 			var enabledConfig = config.orElseThrow();
 			requestExecutor = createRequestExecutor();
-			server = new IntegrationApiServer(enabledConfig.port(), enabledConfig.token(), this::resolvePaths, requestExecutor);
+			server = new IntegrationApiServer(enabledConfig.port(), enabledConfig.token(), this::resolvePaths, this::listUnlockedVaults, requestExecutor);
 			server.start();
 			shutdownHook.runOnShutdown(ShutdownHook.PRIO_FIRST, this::close);
 			LOG.info("Experimental integration API listening on 127.0.0.1:{}.", server.address().getPort());
@@ -91,11 +91,32 @@ public class IntegrationApi implements AutoCloseable {
 		return preparedPaths.stream().map(this::resolvePrepared).toList();
 	}
 
+	private List<IntegrationApiServer.VaultResult> listUnlockedVaults() throws Exception {
+		var vaults = unlockedVaultsOnFxThread();
+		return vaults.stream() //
+				.map(vault -> new IntegrationApiServer.VaultResult(vault.vaultId(), vault.mountPath().toString(), vault.ciphertextRootPath().toString())) //
+				.toList();
+	}
+
 	private List<PreparedPath> prepareOnFxThread(List<String> paths) throws Exception {
 		if (Platform.isFxApplicationThread()) {
 			return prepareNow(paths);
 		}
 		var task = new FutureTask<>(() -> prepareNow(paths));
+		Platform.runLater(task);
+		try {
+			return task.get(FX_DISPATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+		} catch (TimeoutException e) {
+			task.cancel(false);
+			throw e;
+		}
+	}
+
+	private List<CleartextPathMapper.UnlockedVault> unlockedVaultsOnFxThread() throws Exception {
+		if (Platform.isFxApplicationThread()) {
+			return pathMapper.unlockedVaults();
+		}
+		var task = new FutureTask<>(pathMapper::unlockedVaults);
 		Platform.runLater(task);
 		try {
 			return task.get(FX_DISPATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);

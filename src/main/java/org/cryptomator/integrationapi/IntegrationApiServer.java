@@ -19,21 +19,26 @@ import java.util.concurrent.TimeoutException;
 class IntegrationApiServer implements AutoCloseable {
 
 	static final int MAX_PATHS = 256;
+	static final int MAX_VAULTS = 256;
 	private static final int MAX_REQUEST_BYTES = 64 * 1024;
 	private static final String RESOLVE_PATH = "/v1/resolve";
+	private static final String VAULTS_PATH = "/v1/vaults";
 	private static final ObjectMapper JSON = new ObjectMapper();
 
 	private final HttpServer server;
 	private final String expectedAuthorization;
 	private final PathResolver resolver;
+	private final VaultLister vaultLister;
 
-	IntegrationApiServer(int port, String token, PathResolver resolver, Executor executor) throws IOException {
+	IntegrationApiServer(int port, String token, PathResolver resolver, VaultLister vaultLister, Executor executor) throws IOException {
 		var loopback = InetAddress.getByAddress(new byte[]{127, 0, 0, 1});
 		this.server = HttpServer.create(new InetSocketAddress(loopback, port), 0);
 		this.server.setExecutor(executor);
 		this.server.createContext(RESOLVE_PATH, this::handleResolve);
+		this.server.createContext(VAULTS_PATH, this::handleVaults);
 		this.expectedAuthorization = "Bearer " + token;
 		this.resolver = resolver;
+		this.vaultLister = vaultLister;
 	}
 
 	void start() {
@@ -51,16 +56,10 @@ class IntegrationApiServer implements AutoCloseable {
 
 	private void handleResolve(HttpExchange exchange) throws IOException {
 		try {
-			if (!RESOLVE_PATH.equals(exchange.getRequestURI().getPath())) {
-				sendError(exchange, 404, "not_found");
-			} else if (!isValidHost(exchange)) {
-				sendError(exchange, 400, "invalid_host");
-			} else if (exchange.getRequestHeaders().containsKey("Origin")) {
-				sendError(exchange, 403, "browser_origin_forbidden");
-			} else if (!isAuthorized(exchange)) {
-				exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
-				sendError(exchange, 401, "unauthorized");
-			} else if (!"POST".equals(exchange.getRequestMethod())) {
+			if (rejectInvalidRequest(exchange, RESOLVE_PATH)) {
+				return;
+			}
+			if (!"POST".equals(exchange.getRequestMethod())) {
 				exchange.getResponseHeaders().set("Allow", "POST");
 				sendError(exchange, 405, "method_not_allowed");
 			} else if (!hasJsonContentType(exchange)) {
@@ -70,6 +69,41 @@ class IntegrationApiServer implements AutoCloseable {
 			}
 		} finally {
 			exchange.close();
+		}
+	}
+
+	private void handleVaults(HttpExchange exchange) throws IOException {
+		try {
+			if (rejectInvalidRequest(exchange, VAULTS_PATH)) {
+				return;
+			}
+			if (!"GET".equals(exchange.getRequestMethod())) {
+				exchange.getResponseHeaders().set("Allow", "GET");
+				sendError(exchange, 405, "method_not_allowed");
+			} else {
+				handleAuthorizedVaultListing(exchange);
+			}
+		} finally {
+			exchange.close();
+		}
+	}
+
+	private boolean rejectInvalidRequest(HttpExchange exchange, String expectedPath) throws IOException {
+		if (!expectedPath.equals(exchange.getRequestURI().getPath())) {
+			sendError(exchange, 404, "not_found");
+			return true;
+		} else if (!isValidHost(exchange)) {
+			sendError(exchange, 400, "invalid_host");
+			return true;
+		} else if (exchange.getRequestHeaders().containsKey("Origin")) {
+			sendError(exchange, 403, "browser_origin_forbidden");
+			return true;
+		} else if (!isAuthorized(exchange)) {
+			exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
+			sendError(exchange, 401, "unauthorized");
+			return true;
+		} else {
+			return false;
 		}
 	}
 
@@ -96,6 +130,24 @@ class IntegrationApiServer implements AutoCloseable {
 			sendError(exchange, 503, "temporarily_unavailable");
 		} catch (Exception e) {
 			sendError(exchange, 500, "mapping_failed");
+		}
+	}
+
+	private void handleAuthorizedVaultListing(HttpExchange exchange) throws IOException {
+		try {
+			var vaults = vaultLister.list();
+			if (vaults.size() > MAX_VAULTS) {
+				sendError(exchange, 413, "too_many_vaults");
+			} else {
+				sendJson(exchange, 200, new VaultsResponse(vaults));
+			}
+		} catch (TimeoutException | RejectedExecutionException e) {
+			sendError(exchange, 503, "temporarily_unavailable");
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			sendError(exchange, 503, "temporarily_unavailable");
+		} catch (Exception e) {
+			sendError(exchange, 500, "vault_listing_failed");
 		}
 	}
 
@@ -152,9 +204,19 @@ class IntegrationApiServer implements AutoCloseable {
 		List<MappingResult> resolve(List<String> paths) throws Exception;
 	}
 
+	@FunctionalInterface
+	interface VaultLister {
+
+		List<VaultResult> list() throws Exception;
+	}
+
 	record ResolveRequest(List<String> paths) {}
 
 	record ResolveResponse(List<MappingResult> results) {}
+
+	record VaultsResponse(List<VaultResult> vaults) {}
+
+	record VaultResult(String vaultId, String mountPath, String ciphertextRootPath) {}
 
 	record MappingResult(String status, String vaultId, String ciphertextPath, String error) {
 

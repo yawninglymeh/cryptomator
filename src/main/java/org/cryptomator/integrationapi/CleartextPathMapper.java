@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.ProviderMismatchException;
 import java.util.Comparator;
+import java.util.List;
 
 @FxApplicationScoped
 class CleartextPathMapper {
@@ -39,6 +40,16 @@ class CleartextPathMapper {
 		return new PathMapping(target.vaultId(), target.vault().getCiphertextPath(target.cleartextPath()));
 	}
 
+	List<UnlockedVault> unlockedVaults() {
+		return vaults.stream() //
+				.filter(Vault::isUnlocked) //
+				.map(VaultMount::from) //
+				.filter(vaultMount -> vaultMount != null && vaultMount.vault().getPath().isAbsolute()) //
+				.map(vaultMount -> new UnlockedVault(vaultMount.vault().getId(), vaultMount.mountPath(), vaultMount.vault().getPath().normalize())) //
+				.sorted(Comparator.comparing(vault -> vault.mountPath().toString())) //
+				.toList();
+	}
+
 	private static boolean contains(Path mountPath, Path cleartextPath) {
 		try {
 			return cleartextPath.startsWith(mountPath);
@@ -61,4 +72,6 @@ class CleartextPathMapper {
 	record MappingTarget(Vault vault, String vaultId, Path cleartextPath) {}
 
 	record PathMapping(String vaultId, Path ciphertextPath) {}
+
+	record UnlockedVault(String vaultId, Path mountPath, Path ciphertextRootPath) {}
 }

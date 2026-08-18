@@ -103,6 +103,27 @@ public class CleartextPathMapperTest {
 		Mockito.verify(outerVault, Mockito.never()).getCiphertextPath(Mockito.any());
 	}
 
+	@Test
+	public void testListsOnlyUnlockedPathMountedVaults() throws Exception {
+		var mountPath = temporaryDirectory.resolve("vault").toAbsolutePath();
+		var ciphertextRoot = temporaryDirectory.resolve("ciphertext").toAbsolutePath();
+		var unlockedVault = unlockedVault("vault-1", mountPath, mountPath.resolve("file.txt"), ciphertextRoot.resolve("file.c9r"));
+		Mockito.when(unlockedVault.getPath()).thenReturn(ciphertextRoot);
+		var lockedVault = Mockito.mock(Vault.class);
+		Mockito.when(lockedVault.isUnlocked()).thenReturn(false);
+		var uriMountedVault = Mockito.mock(Vault.class);
+		Mockito.when(uriMountedVault.isUnlocked()).thenReturn(true);
+		Mockito.when(uriMountedVault.getMountPoint()).thenReturn(Mountpoint.forUri(URI.create("https://example.com/vault")));
+		var mapper = new CleartextPathMapper(FXCollections.observableArrayList(lockedVault, uriMountedVault, unlockedVault));
+
+		var result = mapper.unlockedVaults();
+
+		Assertions.assertEquals(1, result.size());
+		Assertions.assertEquals("vault-1", result.getFirst().vaultId());
+		Assertions.assertEquals(mountPath, result.getFirst().mountPath());
+		Assertions.assertEquals(ciphertextRoot, result.getFirst().ciphertextRootPath());
+	}
+
 	private Vault unlockedVault(String id, Path mountPath, Path cleartextPath, Path ciphertextPath) throws IOException {
 		var vault = Mockito.mock(Vault.class);
 		Mockito.when(vault.isUnlocked()).thenReturn(true);
