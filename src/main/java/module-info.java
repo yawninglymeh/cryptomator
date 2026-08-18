@@ -36,6 +36,7 @@ open module org.cryptomator.desktop {
 	// jdk:
 	requires java.desktop;
 	requires java.net.http;
+	requires jdk.httpserver;
 	requires javafx.base;
 	requires javafx.graphics;
 	requires javafx.controls;

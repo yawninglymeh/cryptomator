@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
@@ -39,6 +40,8 @@ public class Environment {
 	public static final String DISABLE_UPDATE_CHECK_PROP_NAME = "cryptomator.disableUpdateCheck";
 	public static final String HUB_ALLOWED_HOSTS_PROP_NAME = "cryptomator.hub.allowedHosts";
 	public static final String HUB_TOFU_PROP_NAME = "cryptomator.hub.enableTrustOnFirstUse";
+	public static final String INTEGRATION_API_PORT_PROP_NAME = "cryptomator.integrationApi.port";
+	public static final String INTEGRATION_API_TOKEN_PROP_NAME = "cryptomator.integrationApi.token";
 
 	private Environment() {}
 
@@ -162,6 +165,15 @@ public class Environment {
 
 	public boolean hubTrustOnFirstUse() {
 		return Boolean.getBoolean(HUB_TOFU_PROP_NAME);
+	}
+
+	public OptionalInt getIntegrationApiPort() {
+		var value = System.getProperty(INTEGRATION_API_PORT_PROP_NAME);
+		return value == null ? OptionalInt.empty() : OptionalInt.of(Integer.parseInt(value));
+	}
+
+	public Optional<String> getIntegrationApiToken() {
+		return Optional.ofNullable(System.getProperty(INTEGRATION_API_TOKEN_PROP_NAME));
 	}
 
 	private Optional<Path> getPath(String propertyName) {

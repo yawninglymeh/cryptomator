@@ -4,6 +4,7 @@ import dagger.Lazy;
 import org.cryptomator.common.Environment;
 import org.cryptomator.common.settings.Settings;
 import org.cryptomator.common.settings.VaultSettings;
+import org.cryptomator.integrationapi.IntegrationApi;
 import org.cryptomator.ui.traymenu.TrayMenuComponent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,7 @@ public class FxApplication {
 	private final AutoUnlocker autoUnlocker;
 	private final FxFSEventList fxFSEventList;
 	private final FxNotificationManager notificationManager;
+	private final IntegrationApi integrationApi;
 
 	@Inject
 	FxApplication(Application fxApp,
@@ -48,7 +50,8 @@ public class FxApplication {
 				  FxApplicationTerminator applicationTerminator, //
 				  AutoUnlocker autoUnlocker, //
 				  FxFSEventList fxFSEventList, //
-				  FxNotificationManager notificationManager) {
+				  FxNotificationManager notificationManager, //
+				  IntegrationApi integrationApi) {
 		this.startupTime = startupTime;
 		this.environment = environment;
 		this.settings = settings;
@@ -60,6 +63,7 @@ public class FxApplication {
 		this.autoUnlocker = autoUnlocker;
 		this.fxFSEventList = fxFSEventList;
 		this.notificationManager = notificationManager;
+		this.integrationApi = integrationApi;
 
 		INSTANCE.set(fxApp);
 	}
@@ -109,6 +113,7 @@ public class FxApplication {
 		fxFSEventList.schedulePollForUpdates();
 		notificationManager.schedulePollForUpdates();
 		autoUnlocker.tryUnlockForTimespan(2, TimeUnit.MINUTES);
+		integrationApi.start();
 	}
 
 	private void migrateAndInformDokanyRemoval() {
